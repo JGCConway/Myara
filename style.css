@@ -626,4 +626,25 @@ body.light-mode .editor-header {
   /* PC editor — fewer columns so labels don't wrap */
   .pc-combat-grid   { grid-template-columns: repeat(3, 1fr); }
   .pc-passives-grid { grid-template-columns: 1fr; }
+
+  /* Landing mode cards — stack on mobile */
+  .mode-card { min-width: 100% !important; max-width: 100% !important; }
+}
+
+/* ── Mode selection landing ──────────────────────────────────────────────────── */
+#mode-select-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  overflow-y: auto;
+}
+
+.mode-card {
+  outline: none;
+}
+.mode-card:hover {
+  border-color: #c8a96e !important;
+  box-shadow: 0 0 0 1px #c8a96e40;
+}
+.body.light-mode .mode-card:hover {
+  border-color: #8a6010 !important;
+  box-shadow: 0 0 0 1px #8a601040;
 }

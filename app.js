@@ -122,6 +122,14 @@ let combatHistory = lsGet("combatHistory", []); // [{id, timestamp, round, comba
 function saveCombatHistory() { lsSet("combatHistory", combatHistory); }
 let combatAddEnemyOpen = false;
 let combatShowLanding = true;
+let futureCombats = lsGet("futureCombats", []);
+function saveFutureCombats() { lsSet("futureCombats", futureCombats); }
+let combatPlanOpen = false;
+let combatPlanMode = "future"; // "future" | "immediate"
+let combatPlanEnemies = []; // staged enemies for the encounter planner
+let combatPlanAddOpen = false; // whether add-enemy sub-form is open in planner
+let combatSelectedBestiaryKey = null; // tracks last bestiary monster selected in any add-form
+let combatReturnNav = false; // when true, PC/bestiary back buttons return to combat
 let bestiaryMonsters = null;
 let bestiaryLoading = false;
 let bestiaryQuery = "";
@@ -137,6 +145,20 @@ let bestiaryFavorites = lsGet("bestiaryFavorites", {}); // { "Name|Source": {nam
 function saveBestiaryFavorites() { lsSet("bestiaryFavorites", bestiaryFavorites); }
 let cityFavorites = lsGet("cityFavorites", {}); // { [cityId]: true }
 function saveCityFavorites() { lsSet("cityFavorites", cityFavorites); }
+
+// ── App mode ─────────────────────────────────────────────────────────────────
+let appMode = lsGet("appMode", null); // null | "dm" | "player"
+function saveAppMode() { lsSet("appMode", appMode); }
+function selectMode(mode) { appMode = mode; saveAppMode(); render(); }
+
+// ── Player state ──────────────────────────────────────────────────────────────
+let playerCurrentPage = "notes";
+let playerNoteEditorId = null;
+let playerNotes = lsGet("playerNotes", []); // [{ id, title, body, updatedAt }]
+function savePlayerNotes() { lsSet("playerNotes", playerNotes); }
+let playerCharacters = lsGet("playerCharacters", []); // same shape as pcLinks
+function savePlayerCharacters() { lsSet("playerCharacters", playerCharacters); }
+let playerCharEditorState = null;
 let cityTradeOverrides = lsGet("cityTradeOverrides", {}); // { [cityId]: { exports: [...], imports: [...] } }
 function getCityExports(cityId) { const o = cityTradeOverrides[String(cityId)]; return o ? o.exports : (getLocationById(cityId)?.exports || []); }
 function getCityImports(cityId) { const o = cityTradeOverrides[String(cityId)]; return o ? o.imports : (getLocationById(cityId)?.imports || []); }
@@ -466,6 +488,15 @@ function saveCurrentFactionState() {
 
 // ── Render ─────────────────────────────────────────────────────────────────
 function render() {
+  const overlay = document.getElementById("mode-select-overlay");
+  if (appMode === null) {
+    overlay.style.display = "flex";
+    overlay.innerHTML = renderLandingHTML();
+    document.getElementById("hotbar").style.display = "none";
+    return;
+  }
+  overlay.style.display = "none";
+  document.getElementById("hotbar").style.display = "";
   renderHeader();
   renderSidebar();
   renderMain();
@@ -504,6 +535,27 @@ function renderHeader() {
   } else {
     countText = "";
   }
+
+  if (appMode === "player") {
+    if (playerCurrentPage === "notes") {
+      countText = `${playerNotes.length} note${playerNotes.length === 1 ? "" : "s"}`;
+    } else if (playerCurrentPage === "character") {
+      countText = `${playerCharacters.length} character${playerCharacters.length === 1 ? "" : "s"}`;
+    }
+    subtitle = "Player Mode";
+    header.innerHTML = `
+      <div class="header-top">
+        <div class="header-title-group">
+          <h1>${title}</h1>
+          ${countText ? `<span id="location-count">${countText}</span>` : ""}
+        </div>
+        <button onclick="selectMode(null)" style="background:none;border:1px solid #2a2518;border-radius:3px;color:#5a5040;cursor:pointer;font-family:inherit;font-size:12px;letter-spacing:0.05em;padding:5px 14px;flex-shrink:0;">Switch Mode</button>
+      </div>
+      <p class="subtitle">${subtitle}</p>
+    `;
+    return;
+  }
+
   const showMenuToggle = !["home", "pcs", "settings"].includes(currentPage);
   header.innerHTML = `
     <div class="header-top">
@@ -526,13 +578,61 @@ function renderHeader() {
 }
 
 function renderHotbar() {
-  document.querySelectorAll(".hotbar-btn").forEach(btn => btn.classList.remove("active"));
-  const activeBtn = document.getElementById(`hotbar-${currentPage}`);
-  if (activeBtn) activeBtn.classList.add("active");
+  const hotbar = document.getElementById("hotbar");
+  if (appMode === "player") {
+    const a = p => playerCurrentPage === p ? " active" : "";
+    hotbar.innerHTML = `
+      <button class="hotbar-btn${a("notes")}" data-player-page="notes" title="Notes">
+        <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="M440-278v-394q-41-24-87-36t-93-12q-36 0-71.5 7T120-692v396q35-12 69.5-18t70.5-6q47 0 91.5 10.5T440-278Zm40 118q-48-38-104-59t-116-21q-42 0-82.5 11T100-198q-21 11-40.5-1T40-234v-482q0-11 5.5-21T62-752q46-24 96-36t102-12q74 0 126 17t112 52q11 6 16.5 14t5.5 21v418q44-21 88.5-31.5T700-320q36 0 70.5 6t69.5 18v-481q15 5 29.5 11t28.5 14q11 5 16.5 15t5.5 21v482q0 23-19.5 35t-40.5 1q-37-20-77.5-31T700-240q-60 0-116 21t-104 59Zm140-240v-440l120-40v440l-120 40Zm-340-99Z"/></svg>
+      </button>
+      <button class="hotbar-btn${a("character")}" data-player-page="character" title="My Character">
+        <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="M720-40q-83 0-141.5-58.5T520-240q0-83 58.5-141.5T720-440q83 0 141.5 58.5T920-240q0 83-58.5 141.5T720-40ZM280-600h400v-80H280v80Zm187 480H200q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v268q-29-14-58.5-21t-61.5-7q-11 0-20.5.5T680-517v-3H280v80h245q-18 17-32.5 37T467-360H280v80h163q-2 10-2.5 19.5T440-240q0 33 6 61.5t21 58.5Zm295.5-137.5Q780-275 780-300t-17.5-42.5Q745-360 720-360t-42.5 17.5Q660-325 660-300t17.5 42.5Q695-240 720-240t42.5-17.5ZM776-134q26-14 43-39-23-14-48-20.5t-51-6.5q-26 0-51 6.5T621-173q17 25 43 39t56 14q30 0 56-14Z"/></svg>
+      </button>
+      <button class="hotbar-btn${a("settings")}" data-player-page="settings" title="Settings">
+        <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="m370-80-16-128q-13-5-24.5-12T307-235l-119 50L78-375l103-78q-1-7-1-13.5v-27q0-6.5 1-13.5L78-585l110-190 119 50q11-8 23-15t24-12l16-128h220l16 128q13 5 24.5 12t22.5 15l119-50 110 190-103 78q1 7 1 13.5v27q0 6.5-2 13.5l103 78-110 190-118-50q-11 8-23 15t-24 12L590-80H370Zm112-260q58 0 99-41t41-99q0-58-41-99t-99-41q-59 0-99.5 41T342-480q0 58 40.5 99t99.5 41Z"/></svg>
+      </button>`;
+    return;
+  }
+  const a = p => currentPage === p ? " active" : "";
+  hotbar.innerHTML = `
+    <button class="hotbar-btn${a("home")}" data-page="home" title="Home">
+      <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="M160-80v-560q0-33 23.5-56.5T240-720h320q33 0 56.5 23.5T640-640v560L400-200 160-80Zm560-160v-560H280v-80h440q33 0 56.5 23.5T800-800v560h-80Z"/></svg>
+    </button>
+    <button class="hotbar-btn${a("locations")}" data-page="locations" title="Locations">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+    </button>
+    <button class="hotbar-btn${a("bestiary")}" data-page="bestiary" title="Bestiary">
+      <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="M480-400q95 0 167.5-55.5T720-600q0-35-12-65.5T674-720q-64 2-109 48t-45 112h-80q0-66-45-111t-109-48q-22 24-34 54t-12 65q0 89 72.5 144.5T480-400ZM311.5-571.5Q300-583 300-600t11.5-28.5Q323-640 340-640t28.5 11.5Q380-617 380-600t-11.5 28.5Q357-560 340-560t-28.5-11.5Zm280 0Q580-583 580-600t11.5-28.5Q603-640 620-640t28.5 11.5Q660-617 660-600t-11.5 28.5Q637-560 620-560t-28.5-11.5ZM480-80q-134 0-227-93t-93-227v-200q0-122 96-201t224-79q128 0 224 79t96 201v440h-80q-50 0-85-35t-35-85v-60q-20 7-40 11.5t-40 6.5v42q0 83 58.5 141.5T720-80H480Z"/></svg>
+    </button>
+    <button class="hotbar-btn${a("combat")}" data-page="combat" title="Combat">
+      <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="M762-96 645-212l-88 88-28-28q-23-23-23-57t23-57l169-169q23-23 57-23t57 23l28 28-88 88 116 117q12 12 12 28t-12 28l-50 50q-12 12-28 12t-28-12Zm118-628L426-270l5 4q23 23 23 57t-23 57l-28 28-88-88L198-96q-12 12-28 12t-28-12l-50-50q-12-12-12-28t12-28l116-117-88-88 28-28q23-23 57-23t57 23l4 5 454-454h160v160ZM278-526 80-724v-160h160l198 198-160 160Z"/></svg>
+    </button>
+    <button class="hotbar-btn${a("magicItems")}" data-page="magicItems" title="Magic Items">
+      <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="m176-120-56-56 301-302-181-45 198-123-17-234 179 151 216-88-87 217 151 178-234-16-124 198-45-181-301 301Zm24-520-80-80 80-80 80 80-80 80Zm520 520-80-80 80-80 80 80-80 80Z"/></svg>
+    </button>
+    <button class="hotbar-btn${a("factions")}" data-page="factions" title="Factions">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z"/></svg>
+    </button>
+    <button class="hotbar-btn${a("stores")}" data-page="stores" title="Stores">
+      <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="M160-720v-80h640v80H160Zm0 560v-240h-40v-80l40-200h640l40 200v80h-40v240h-80v-240H560v240H160Zm80-80h240v-160H240v160Z"/></svg>
+    </button>
+    <button class="hotbar-btn${a("ships")}" data-page="ships" title="Ships">
+      <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="m120-420 320-460v460H120Zm380 0q12-28 26-98t14-142q0-72-13.5-148T500-920q61 18 121.5 67t109 117q48.5 68 79 149.5T840-420H500ZM360-200q-36 0-67-17t-53-43q-14 15-30.5 28T173-211q-35-26-59.5-64.5T80-360h800q-9 46-33.5 84.5T787-211q-20-8-36.5-21T720-260q-23 26-53.5 43T600-200q-36 0-67-17t-53-43q-22 26-53 43t-67 17ZM80-40v-80h40q32 0 62.5-10t57.5-30q27 20 57.5 29.5T360-121q32 0 62-9.5t58-29.5q27 20 57.5 29.5T600-121q32 0 62-9.5t58-29.5q28 20 58 30t62 10h40v80h-40q-31 0-61-7.5T720-70q-29 15-59 22.5T600-40q-31 0-61-7.5T480-70q-29 15-59 22.5T360-40q-31 0-61-7.5T240-70q-29 15-59 22.5T120-40H80Z"/></svg>
+    </button>
+    <button class="hotbar-btn${a("npcs")}" data-page="npcs" title="NPCs">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+    </button>
+    <button class="hotbar-btn${a("pcs")}" data-page="pcs" title="Player Characters">
+      <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="M720-40q-83 0-141.5-58.5T520-240q0-83 58.5-141.5T720-440q83 0 141.5 58.5T920-240q0 83-58.5 141.5T720-40ZM280-600h400v-80H280v80Zm187 480H200q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v268q-29-14-58.5-21t-61.5-7q-11 0-20.5.5T680-517v-3H280v80h245q-18 17-32.5 37T467-360H280v80h163q-2 10-2.5 19.5T440-240q0 33 6 61.5t21 58.5Zm295.5-137.5Q780-275 780-300t-17.5-42.5Q745-360 720-360t-42.5 17.5Q660-325 660-300t17.5 42.5Q695-240 720-240t42.5-17.5ZM776-134q26-14 43-39-23-14-48-20.5t-51-6.5q-26 0-51 6.5T621-173q17 25 43 39t56 14q30 0 56-14Z"/></svg>
+    </button>
+    <button class="hotbar-btn${a("settings")}" data-page="settings" title="Settings">
+      <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="m370-80-16-128q-13-5-24.5-12T307-235l-119 50L78-375l103-78q-1-7-1-13.5v-27q0-6.5 1-13.5L78-585l110-190 119 50q11-8 23-15t24-12l16-128h220l16 128q13 5 24.5 12t22.5 15l119-50 110 190-103 78q1 7 1 13.5v27q0 6.5-2 13.5l103 78-110 190-118-50q-11 8-23 15t-24 12L590-80H370Zm112-260q58 0 99-41t41-99q0-58-41-99t-99-41q-59 0-99.5 41T342-480q0 58 40.5 99t99.5 41Z"/></svg>
+    </button>`;
 }
 
 function renderSidebar() {
   const sidebar = document.getElementById("sidebar");
+  if (appMode === "player") { sidebar.style.display = "none"; return; }
   if (currentPage === "locations") {
     sidebar.style.display = "";
     const locTypeOptions = [
@@ -816,6 +916,7 @@ function makeMagicItemSidebarBtn(item) {
 
 function renderMain() {
   const main = document.getElementById("main-content");
+  if (appMode === "player") { renderPlayerMain(main); return; }
   if (currentPage === "locations") {
     const isCustom = customLocations.some(l => l.id === selected.id);
     if (isCustom) {
@@ -2727,7 +2828,7 @@ function renderPcEditor(main) {
     { key: "int", label: "INT" }, { key: "wis", label: "WIS" }, { key: "cha", label: "CHA" },
   ];
 
-  let html = `<button class="back-btn" id="btn-pc-back">← Back to Player Characters</button>`;
+  let html = `<button class="back-btn" id="btn-pc-back">← ${combatReturnNav ? "Back to Combat Encounter" : "Back to Player Characters"}</button>`;
   const classLevel = [pc.class, pc.level ? `Lv. ${pc.level}` : ""].filter(Boolean).join(" — ");
   html += `<div class="detail-header editor-header" style="background:#16140e;border:1px solid #3a3020;margin-bottom:1.5rem;">
     <div>
@@ -2907,7 +3008,10 @@ function bindPcEditorEvents() {
     el.addEventListener("change", markDirty);
   });
 
-  document.getElementById("btn-pc-back").onclick = () => { pcEditorState = null; render(); };
+  document.getElementById("btn-pc-back").onclick = () => {
+    if (combatReturnNav) { returnToCombat(); return; }
+    pcEditorState = null; render();
+  };
   saveBtn.onclick = savePc;
   const deleteBtn = document.getElementById("btn-pc-delete");
   if (deleteBtn) deleteBtn.onclick = () => {
@@ -3008,7 +3112,15 @@ function continueCombat() {
 
 function endCombat() {
   if (!confirm("End this combat encounter?")) return;
-  // Snapshot to history
+  _snapshotCombatToHistory();
+  combatEncounter = { active: false, round: 1, currentTurnIdx: -1, combatants: [] };
+  saveCombatEncounter();
+  combatAddEnemyOpen = false;
+  combatShowLanding = true;
+  render();
+}
+
+function _snapshotCombatToHistory() {
   const snapshot = {
     id: "combat-" + Date.now(),
     timestamp: Date.now(),
@@ -3026,10 +3138,179 @@ function endCombat() {
   combatHistory.unshift(snapshot);
   if (combatHistory.length > 5) combatHistory.length = 5;
   saveCombatHistory();
-  combatEncounter = { active: false, round: 1, currentTurnIdx: -1, combatants: [] };
+}
+
+// ── Encounter Planner ─────────────────────────────────────────────────────────
+
+function searchPlanBestiary(query) {
+  const dropdown = document.getElementById("combat-plan-monster-dropdown");
+  if (!dropdown) return;
+  if (!query.trim()) { dropdown.style.display = "none"; return; }
+  if (bestiaryLoading || !bestiaryMonsters) {
+    dropdown.innerHTML = `<div style="padding:10px 12px;font-size:12px;opacity:0.6;">Loading bestiary…</div>`;
+    dropdown.style.display = "block";
+    return;
+  }
+  const q = query.toLowerCase();
+  const matches = bestiaryMonsters.filter(m => m.name.toLowerCase().includes(q)).slice(0, 12);
+  if (!matches.length) { dropdown.style.display = "none"; return; }
+  const lm = document.body.classList.contains("light-mode");
+  const bg = lm ? "#f4efe0" : "#1a1814";
+  const border = lm ? "#c8b890" : "#2a2518";
+  const hover = lm ? "#ece5cf" : "#232018";
+  const text = lm ? "#2a2010" : "#c8b890";
+  const muted = lm ? "#8a7a50" : "#7a6a48";
+  dropdown.style.cssText = `display:block;position:absolute;top:100%;left:0;right:0;background:${bg};border:1px solid ${border};border-radius:4px;z-index:200;max-height:260px;overflow-y:auto;margin-top:2px;`;
+  dropdown.innerHTML = matches.map((m, i) =>
+    `<div onmousedown="selectPlanBestiaryMonster(${i})" style="padding:9px 12px;cursor:pointer;font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:8px;border-bottom:1px solid ${border};" onmouseover="this.style.background='${hover}'" onmouseout="this.style.background='transparent'">
+      <span style="color:${text};font-weight:500;">${esc(m.name)} <span style="font-size:11px;font-weight:400;opacity:0.6;">${esc(m.source)}</span></span>
+      <span style="font-size:11px;color:${muted};white-space:nowrap;">CR ${esc(String(m.crStr))} &middot; ${m.hp}hp &middot; AC ${m.ac}</span>
+    </div>`
+  ).join("");
+  dropdown._results = matches;
+}
+
+function selectPlanBestiaryMonster(idx) {
+  const dropdown = document.getElementById("combat-plan-monster-dropdown");
+  const m = dropdown?._results?.[idx];
+  if (!m) return;
+  combatSelectedBestiaryKey = `${m.name}|${m.source}`;
+  const nameEl = document.getElementById("combat-plan-enemy-name");
+  const maxHpEl = document.getElementById("combat-plan-enemy-max-hp");
+  const curHpEl = document.getElementById("combat-plan-enemy-cur-hp");
+  const acEl = document.getElementById("combat-plan-enemy-ac");
+  if (nameEl) nameEl.value = m.name;
+  if (maxHpEl) maxHpEl.value = m.hp;
+  if (curHpEl) curHpEl.value = m.hp;
+  if (acEl) acEl.value = m.ac;
+  const searchEl = document.getElementById("combat-plan-monster-search");
+  if (searchEl) searchEl.value = m.name;
+  dropdown.style.display = "none";
+  document.getElementById("combat-plan-enemy-init")?.focus();
+}
+
+function addToPlanEnemies() {
+  const name = document.getElementById("combat-plan-enemy-name")?.value.trim() || "Unknown Enemy";
+  const totalHealth = parseInt(document.getElementById("combat-plan-enemy-max-hp")?.value) || 0;
+  const currentHealth = parseInt(document.getElementById("combat-plan-enemy-cur-hp")?.value) || totalHealth;
+  const ac = parseInt(document.getElementById("combat-plan-enemy-ac")?.value) || 0;
+  const initRaw = document.getElementById("combat-plan-enemy-init")?.value.trim();
+  const initVal = initRaw === "" ? null : (parseInt(initRaw) || 0);
+  const count = Math.max(1, parseInt(document.getElementById("combat-plan-enemy-count")?.value) || 1);
+  for (let i = 0; i < count; i++) {
+    const suffix = count > 1 ? ` #${i + 1}` : "";
+    combatPlanEnemies.push({
+      id: "plan-" + Date.now() + "-" + i,
+      type: "enemy",
+      name: name + suffix,
+      initiative: initVal,
+      currentHealth, totalHealth, ac,
+      bestiaryKey: combatSelectedBestiaryKey || null,
+    });
+  }
+  combatSelectedBestiaryKey = null;
+  combatPlanAddOpen = false;
+  render();
+}
+
+function removePlanEnemy(id) {
+  combatPlanEnemies = combatPlanEnemies.filter(e => e.id !== id);
+  render();
+}
+
+function saveCombatPlan() {
+  const name = document.getElementById("combat-plan-name")?.value.trim() || "Untitled Encounter";
+  futureCombats.push({
+    id: "future-" + Date.now(),
+    name,
+    enemies: [...combatPlanEnemies],
+  });
+  saveFutureCombats();
+  combatPlanEnemies = [];
+  combatPlanOpen = false;
+  combatPlanAddOpen = false;
+  combatSelectedBestiaryKey = null;
+  render();
+}
+
+function startCombatFromPlan() {
+  const enc = combatEncounter;
+  if (enc.active && !confirm("End the current encounter and start this one?")) return;
+  if (enc.active) _snapshotCombatToHistory();
+  combatEncounter = {
+    active: true, round: 1, currentTurnIdx: -1,
+    combatants: [
+      ...pcLinks.map(pc => ({ id: pc.id, type: "pc", initiative: null })),
+      ...combatPlanEnemies.map(e => ({ ...e, id: "enemy-" + Date.now() + Math.random() })),
+    ],
+  };
+  _sortCombatants(false);
   saveCombatEncounter();
-  combatAddEnemyOpen = false;
-  combatShowLanding = true;
+  combatPlanEnemies = [];
+  combatPlanOpen = false;
+  combatPlanAddOpen = false;
+  combatSelectedBestiaryKey = null;
+  combatShowLanding = false;
+  render();
+}
+
+function activateFutureCombat(id) {
+  const fc = futureCombats.find(f => f.id === id);
+  if (!fc) return;
+  if (combatEncounter.active && !confirm("End the current encounter and start this one?")) return;
+  if (combatEncounter.active) _snapshotCombatToHistory();
+  combatEncounter = {
+    active: true, round: 1, currentTurnIdx: -1,
+    combatants: [
+      ...pcLinks.map(pc => ({ id: pc.id, type: "pc", initiative: null })),
+      ...fc.enemies.map(e => ({ ...e, id: "enemy-" + Date.now() + Math.random(), currentHealth: e.totalHealth })),
+    ],
+  };
+  _sortCombatants(false);
+  saveCombatEncounter();
+  futureCombats = futureCombats.filter(f => f.id !== id);
+  saveFutureCombats();
+  combatShowLanding = false;
+  render();
+}
+
+function deleteFutureCombat(id) {
+  futureCombats = futureCombats.filter(f => f.id !== id);
+  saveFutureCombats();
+  render();
+}
+
+// ── Combat stat-sheet navigation ───────────────────────────────────────────────
+
+function navigateToCombatPc(pcId) {
+  const pc = pcLinks.find(p => p.id === pcId);
+  if (!pc) return;
+  combatReturnNav = true;
+  currentPage = "pcs";
+  pcEditorState = { ...pc };
+  combatShowLanding = false;
+  render();
+}
+
+function navigateFromCombatToMonster(bestiaryKey) {
+  combatReturnNav = true;
+  currentPage = "bestiary";
+  bestiaryDetailMonster = bestiaryMonsters?.find(x => `${x.name}|${x.source}` === bestiaryKey) ?? null;
+  render();
+  if (!bestiaryDetailMonster) {
+    loadBestiary().then(() => {
+      bestiaryDetailMonster = bestiaryMonsters?.find(x => `${x.name}|${x.source}` === bestiaryKey) ?? null;
+      if (bestiaryDetailMonster) render();
+    });
+  }
+}
+
+function returnToCombat() {
+  combatReturnNav = false;
+  currentPage = "combat";
+  pcEditorState = null;
+  bestiaryDetailMonster = null;
+  combatShowLanding = false;
   render();
 }
 
@@ -3271,6 +3552,7 @@ function selectBestiaryMonster(idx) {
   const dropdown = document.getElementById("combat-monster-dropdown");
   const m = dropdown?._results?.[idx];
   if (!m) return;
+  combatSelectedBestiaryKey = `${m.name}|${m.source}`;
   const nameEl = document.getElementById("combat-enemy-name");
   const maxHpEl = document.getElementById("combat-enemy-max-hp");
   const curHpEl = document.getElementById("combat-enemy-cur-hp");
@@ -3292,11 +3574,17 @@ function saveNewCombatEnemy() {
   const ac = parseInt(document.getElementById("combat-enemy-ac")?.value) || 0;
   const initRaw = document.getElementById("combat-enemy-init")?.value.trim();
   const initVal = initRaw === "" ? null : (parseInt(initRaw) || 0);
+  const count = Math.max(1, parseInt(document.getElementById("combat-enemy-count")?.value) || 1);
 
-  combatEncounter.combatants.push({
-    id: "enemy-" + Date.now(), type: "enemy",
-    name, initiative: initVal, currentHealth, totalHealth, ac,
-  });
+  for (let i = 0; i < count; i++) {
+    const suffix = count > 1 ? ` #${i + 1}` : "";
+    combatEncounter.combatants.push({
+      id: "enemy-" + Date.now() + "-" + i, type: "enemy",
+      name: name + suffix, initiative: initVal, currentHealth, totalHealth, ac,
+      bestiaryKey: combatSelectedBestiaryKey || null,
+    });
+  }
+  combatSelectedBestiaryKey = null;
   _sortCombatants(true);
   saveCombatEncounter();
   combatAddEnemyOpen = false;
@@ -3371,19 +3659,115 @@ function renderCombatPage(main) {
       }
       html += `</div>`;
     } else {
-      html += `<div style="text-align:center;padding:2.5rem 1rem;margin-bottom:1.5rem;border:1px dashed ${col.dashedBorder};border-radius:3px;">
-        <button onclick="startNewCombat()" class="btn-save dirty">Start New Combat Encounter</button>
-        <p style="font-size:12px;color:${col.muted};margin-top:1rem;">All player characters will be added automatically</p>
-      </div>`;
+      // No active encounter — quick-start button (Start Now mode via planner)
+      if (!combatPlanOpen) {
+        html += `<div style="text-align:center;padding:2.5rem 1rem;margin-bottom:1.5rem;border:1px dashed ${col.dashedBorder};border-radius:3px;">
+          <button onclick="startNewCombat()" class="btn-save dirty">Start New Combat Encounter</button>
+          <p style="font-size:12px;color:${col.muted};margin-top:1rem;">All player characters will be added automatically</p>
+        </div>`;
+      }
     }
 
-    if (enc.active) {
+    // ── Encounter Planner ──────────────────────────────────────────────────
+    if (combatPlanOpen) {
+      const pm = combatPlanMode;
+      html += `<div class="box" style="margin-bottom:1.5rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">
+          <p class="box-label" style="margin:0;">Plan New Encounter</p>
+          <button onclick="combatPlanOpen=false;combatPlanEnemies=[];combatPlanAddOpen=false;render()" style="background:none;border:none;color:${col.muted};cursor:pointer;font-size:18px;line-height:1;padding:2px 6px;" title="Cancel">×</button>
+        </div>
+
+        <div style="display:flex;gap:4px;margin-bottom:0.75rem;background:${col.cardBg};border:1px solid ${col.dashedBorder};border-radius:3px;padding:3px;">
+          <button onclick="combatPlanMode='immediate';render()" style="flex:1;padding:5px 8px;font-size:12px;border-radius:2px;border:none;cursor:pointer;background:${pm==='immediate'?col.activeBorder:'transparent'};color:${pm==='immediate'?col.activeName:col.muted};font-weight:${pm==='immediate'?'600':'normal'};">Start Immediately</button>
+          <button onclick="combatPlanMode='future';render()" style="flex:1;padding:5px 8px;font-size:12px;border-radius:2px;border:none;cursor:pointer;background:${pm==='future'?col.activeBorder:'transparent'};color:${pm==='future'?col.activeName:col.muted};font-weight:${pm==='future'?'600':'normal'};">Add to Future List</button>
+        </div>`;
+
+      if (pm === "future") {
+        html += `<div style="margin-bottom:0.75rem;">
+          <div class="section-label">Encounter Name</div>
+          <input class="edit-input" id="combat-plan-name" style="width:100%" placeholder="e.g. Goblin Ambush">
+        </div>`;
+      }
+
+      // Staged enemies list
+      if (combatPlanEnemies.length > 0) {
+        html += `<div style="margin-bottom:0.75rem;">
+          <div class="section-label" style="margin-bottom:4px;">Staged Combatants</div>`;
+        combatPlanEnemies.forEach(e => {
+          html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 6px;margin-bottom:3px;background:${col.cardBg};border:1px solid ${col.dashedBorder};border-radius:2px;font-size:13px;">
+            <span style="color:${col.inactiveName};">${esc(e.name)}</span>
+            <span style="display:flex;align-items:center;gap:10px;">
+              <span style="color:${col.muted};font-size:11px;">${e.totalHealth} HP &middot; AC ${e.ac}${e.initiative !== null ? ` &middot; Init ${e.initiative}` : ""}</span>
+              <button onclick="removePlanEnemy('${esc(e.id)}')" style="background:none;border:1px solid ${col.removeBorder};color:${col.removeColor};cursor:pointer;padding:1px 6px;border-radius:2px;font-size:12px;line-height:1;">×</button>
+            </span>
+          </div>`;
+        });
+        html += `</div>`;
+      }
+
+      // Add monster sub-form
+      if (combatPlanAddOpen) {
+        html += `<div style="border:1px solid ${col.dashedBorder};border-radius:3px;padding:0.75rem;margin-bottom:0.75rem;">
+          <div style="position:relative;margin-bottom:0.75rem;">
+            <div class="section-label">Search Monster</div>
+            <input class="edit-input" id="combat-plan-monster-search" style="width:100%" placeholder="Type to search all sourcebooks…" autofocus
+              oninput="searchPlanBestiary(this.value)"
+              onfocus="loadBestiary();searchPlanBestiary(this.value)"
+              onblur="setTimeout(()=>{const d=document.getElementById('combat-plan-monster-dropdown');if(d)d.style.display='none'},150)">
+            <div id="combat-plan-monster-dropdown" style="display:none;position:relative;"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr 60px;gap:8px;align-items:end;margin-bottom:0.75rem;">
+            <div><div class="section-label">Name</div><input class="edit-input" id="combat-plan-enemy-name" style="width:100%" placeholder="Enemy name"></div>
+            <div><div class="section-label">Max HP</div><input class="edit-input" id="combat-plan-enemy-max-hp" type="number" style="width:100%" placeholder="HP"></div>
+            <div><div class="section-label">Current HP</div><input class="edit-input" id="combat-plan-enemy-cur-hp" type="number" style="width:100%" placeholder="Cur HP"></div>
+            <div><div class="section-label">AC</div><input class="edit-input" id="combat-plan-enemy-ac" type="number" style="width:100%" placeholder="AC"></div>
+            <div><div class="section-label">Initiative</div><input class="edit-input" id="combat-plan-enemy-init" type="number" style="width:100%" placeholder="Init"></div>
+            <div><div class="section-label">Count</div><input class="edit-input" id="combat-plan-enemy-count" type="number" min="1" style="width:100%" placeholder="1" value="1"></div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button onclick="addToPlanEnemies()" class="btn-save dirty" style="font-size:12px;">Add to Encounter</button>
+            <button onclick="combatPlanAddOpen=false;render()" class="btn-sm-ghost" style="font-size:12px;">Cancel</button>
+          </div>
+        </div>`;
+      } else {
+        html += `<button onclick="combatPlanAddOpen=true;render()" class="btn-dashed" style="margin-bottom:0.75rem;">+ Add Monster / NPC</button>`;
+      }
+
+      html += `<div style="display:flex;gap:8px;margin-top:0.5rem;">
+        <button onclick="${pm === 'future' ? 'saveCombatPlan()' : 'startCombatFromPlan()'}" class="btn-save dirty" style="font-size:12px;">
+          ${pm === 'future' ? 'Save to Future List' : 'Start Encounter'}
+        </button>
+        <button onclick="combatPlanOpen=false;combatPlanEnemies=[];combatPlanAddOpen=false;render()" class="btn-sm-ghost" style="font-size:12px;">Cancel</button>
+      </div>
+      </div>`;
+    } else {
       html += `<div style="margin-bottom:1.5rem;">
-        <button onclick="startNewCombat()" class="btn-dashed">Start New Encounter</button>
+        <button onclick="combatPlanOpen=true;combatPlanMode='future';combatPlanEnemies=[];render()" class="btn-dashed">+ Plan New Encounter</button>
       </div>`;
     }
 
-    // Recent encounters
+    // ── Future Combats ─────────────────────────────────────────────────────
+    if (futureCombats.length > 0) {
+      html += `<div style="margin-bottom:1.5rem;"><div class="section-label" style="margin-bottom:0.75rem;">Future Combats</div>`;
+      futureCombats.forEach(fc => {
+        const enemyNames = fc.enemies.map(e => e.name).join(", ") || "No enemies staged";
+        html += `<div class="box" style="margin-bottom:0.5rem;padding:0.75rem 1rem;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:14px;color:${col.inactiveName};font-weight:500;margin-bottom:3px;">${esc(fc.name)}</div>
+              <div style="font-size:11px;color:${col.muted};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(enemyNames)}</div>
+            </div>
+            <div style="display:flex;gap:6px;flex-shrink:0;">
+              <button onclick="activateFutureCombat('${esc(fc.id)}')" class="btn-save dirty" style="font-size:11px;padding:3px 10px;">Activate</button>
+              <button onclick="deleteFutureCombat('${esc(fc.id)}')" class="btn-delete" style="font-size:11px;padding:3px 8px;">Delete</button>
+            </div>
+          </div>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+
+    // ── Recent Encounters ──────────────────────────────────────────────────
     if (combatHistory.length > 0) {
       html += `<div><div class="section-label" style="margin-bottom:0.75rem;">Recent Encounters</div>`;
       combatHistory.forEach(h => {
@@ -3449,12 +3833,13 @@ function renderCombatPage(main) {
           onblur="setTimeout(()=>{const d=document.getElementById('combat-monster-dropdown');if(d)d.style.display='none'},150)">
         <div id="combat-monster-dropdown" style="display:none;"></div>
       </div>
-      <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr;gap:8px;align-items:end;">
+      <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr 60px;gap:8px;align-items:end;">
         <div><div class="section-label">Name</div><input class="edit-input" id="combat-enemy-name" style="width:100%" placeholder="Enemy name"></div>
         <div><div class="section-label">Max HP</div><input class="edit-input" id="combat-enemy-max-hp" type="number" style="width:100%" placeholder="HP"></div>
         <div><div class="section-label">Current HP</div><input class="edit-input" id="combat-enemy-cur-hp" type="number" style="width:100%" placeholder="Cur HP"></div>
         <div><div class="section-label">AC</div><input class="edit-input" id="combat-enemy-ac" type="number" style="width:100%" placeholder="AC"></div>
         <div><div class="section-label">Initiative</div><input class="edit-input" id="combat-enemy-init" type="number" style="width:100%" placeholder="Init"></div>
+        <div><div class="section-label">Count</div><input class="edit-input" id="combat-enemy-count" type="number" min="1" style="width:100%" placeholder="1" value="1"></div>
       </div>
       <div style="display:flex;gap:8px;margin-top:0.75rem;">
         <button onclick="saveNewCombatEnemy()" class="btn-save dirty" style="font-size:12px;">Add to Initiative</button>
@@ -3479,6 +3864,14 @@ function renderCombatPage(main) {
       const borderColor = isActive ? col.activeBorder : (c.type === "pc" ? col.pcBorder : col.enemyBorder);
       const accentColor = isActive ? col.activeAccent : (c.type === "pc" ? col.pcAccent : col.enemyAccent);
       const initStr = c.initiative !== null ? String(c.initiative) : "";
+      const nameColor = isActive ? col.activeName : col.inactiveName;
+      const nameLinkStyle = `background:none;border:none;cursor:pointer;padding:0;text-align:left;font-size:14px;color:${nameColor};font-weight:${isActive ? "600" : "normal"};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:underline;text-underline-offset:2px;text-decoration-color:${nameColor}44;`;
+
+      const nameEl = c.type === "pc"
+        ? `<button onclick="navigateToCombatPc('${esc(c.id)}')" style="${nameLinkStyle}" title="View stat sheet">${esc(name)}</button>`
+        : c.bestiaryKey
+          ? `<button onclick="navigateFromCombatToMonster('${esc(c.bestiaryKey)}')" style="${nameLinkStyle}" title="View stat sheet">${esc(name)}</button>`
+          : `<span style="font-size:14px;color:${nameColor};font-weight:${isActive ? "600" : "normal"};">${esc(name)}</span>`;
 
       html += `<div style="display:flex;align-items:stretch;background:${col.cardBg};border:1px solid ${borderColor};border-radius:3px;margin-bottom:0.5rem;${isActive ? `box-shadow:0 0 0 1px ${col.activeShadow};` : ""}overflow:hidden;">
         <div style="width:4px;flex-shrink:0;background:${accentColor};"></div>
@@ -3490,7 +3883,7 @@ function renderCombatPage(main) {
           </div>
 
           <div style="flex:1;min-width:100px;">
-            <div style="font-size:14px;color:${isActive ? col.activeName : col.inactiveName};font-weight:${isActive ? "600" : "normal"};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(name)}</div>
+            ${nameEl}
             <div style="font-size:9px;color:${c.type === "pc" ? col.pcType : col.enemyType};margin-top:2px;letter-spacing:0.06em;text-transform:uppercase;">${c.type === "pc" ? "Player Character" : "Enemy / NPC"}</div>
           </div>
 
@@ -3597,7 +3990,7 @@ function renderBestiaryPage(main) {
 
     const favKey = `${m.name}|${m.source}`;
     const isFavDetail = !!bestiaryFavorites[favKey];
-    let html = `<button onclick="bestiaryDetailMonster=null;render()" class="back-btn" style="margin-bottom:1rem;">← Back to Bestiary</button>`;
+    let html = `<button onclick="${combatReturnNav ? 'returnToCombat()' : 'bestiaryDetailMonster=null;render()'}" class="back-btn" style="margin-bottom:1rem;">← ${combatReturnNav ? "Back to Combat Encounter" : "Back to Bestiary"}</button>`;
     html += `<div class="box">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;margin-bottom:0.75rem;">
         <div style="display:flex;align-items:flex-start;gap:8px;">
@@ -3774,6 +4167,15 @@ function renderSettingsPage(main) {
   let html = `<div style="max-width:700px;margin:0 auto;">`;
   html += `<h2 class="page-title">Settings</h2>`;
   html += `<p class="page-subtitle-sm" style="margin-bottom:2rem;">Campaign configuration for The World of Nymara</p>`;
+  html += `<div class="settings-section" style="background:${lm?"#f0ece0":"#0b0d0f"};border:1px solid ${lm?"#c8b890":"#1e1c14"};border-left:3px solid #5a5040;margin-bottom:1.5rem;padding:1rem 1.5rem;">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;">
+      <div>
+        <div class="settings-section-title">Mode</div>
+        <div class="settings-section-sub">Currently in Dungeon Master mode</div>
+      </div>
+      <button onclick="selectMode(null)" style="background:${lm?"#e8e0cc":"#161210"};border:1px solid ${lm?"#c8b890":"#2a2518"};border-radius:3px;color:${lm?"#7a5e14":"#c8a96e"};font-family:inherit;font-size:13px;letter-spacing:0.08em;padding:6px 18px;cursor:pointer;">Switch Mode</button>
+    </div>
+  </div>`;
 
   // ── Appearance ─────────────────────────────────────────────────────────────
   html += `<div class="settings-section ss-appearance">
@@ -4618,14 +5020,535 @@ function restorePageState(page) {
   }
 }
 
-// Hotbar events
-document.querySelectorAll(".hotbar-btn").forEach(btn => {
-  btn.onclick = () => {
+// ── Player settings ───────────────────────────────────────────────────────────
+function renderPlayerSettingsPage(main) {
+  const lm = document.body.classList.contains("light-mode");
+  const expBg  = lm ? "#f0ece0" : "#1a1408"; const expBr = lm ? "#d4c4a0" : "#3a2a10"; const expCl = lm ? "#7a5a20" : "#c8a060";
+  const impBg  = lm ? "#ede8d8" : "#0e0c0a"; const impBr = lm ? "#d4c8a0" : "#2a2010"; const impCl = lm ? "#9a8860" : "#7a6040";
+
+  main.innerHTML = `<div style="max-width:600px;margin:0 auto;">
+    <h2 class="page-title">Settings</h2>
+    <p class="page-subtitle-sm" style="margin-bottom:2rem;">Player preferences</p>
+
+    <div class="settings-section ss-appearance" style="margin-bottom:1.5rem;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;">
+        <div>
+          <div class="settings-section-title">Appearance</div>
+          <div class="settings-section-sub">Switch between dark and light theme</div>
+        </div>
+        <button id="player-btn-theme" style="background:${lm?"#e8e0cc":"#1a180e"};border:1px solid ${lm?"#c8b890":"#3a3020"};border-radius:3px;color:${lm?"#7a5e14":"#c8a96e"};font-family:inherit;font-size:13px;letter-spacing:0.08em;padding:6px 18px;cursor:pointer;">
+          ${lm ? "☀ Light" : "☾ Dark"}
+        </button>
+      </div>
+    </div>
+
+    <div class="settings-section ss-data" style="margin-bottom:1.5rem;">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;">
+        <div>
+          <div class="settings-section-title">Data</div>
+          <div class="settings-section-sub">Export your notes and characters, or restore from a backup</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-shrink:0;align-items:center;">
+          <button id="player-export-btn" style="background:${expBg};border:1px solid ${expBr};border-radius:2px;color:${expCl};font-family:inherit;font-size:12px;letter-spacing:0.08em;padding:6px 14px;cursor:pointer;">Download JSON</button>
+          <label style="background:${impBg};border:1px solid ${impBr};border-radius:2px;color:${impCl};font-family:inherit;font-size:12px;letter-spacing:0.08em;padding:6px 14px;cursor:pointer;display:inline-block;">
+            Upload JSON
+            <input type="file" id="player-import-file" accept=".json" style="display:none;">
+          </label>
+        </div>
+      </div>
+      <div id="player-import-status" style="margin-top:0.75rem;font-size:12px;display:none;"></div>
+    </div>
+
+    <div class="settings-section" style="background:${lm?"#f0ece0":"#0b0d0f"};border:1px solid ${lm?"#c8b890":"#1e1c14"};border-left:3px solid #5a5040;margin-bottom:1.5rem;padding:1rem 1.5rem;">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;">
+        <div>
+          <div class="settings-section-title">Mode</div>
+          <div class="settings-section-sub">Currently in Player mode</div>
+        </div>
+        <button onclick="selectMode(null)" style="background:${lm?"#e8e0cc":"#161210"};border:1px solid ${lm?"#c8b890":"#2a2518"};border-radius:3px;color:${lm?"#7a5e14":"#c8a96e"};font-family:inherit;font-size:13px;letter-spacing:0.08em;padding:6px 18px;cursor:pointer;">Switch Mode</button>
+      </div>
+    </div>
+  </div>`;
+
+  document.getElementById("player-btn-theme").onclick = () => {
+    document.body.classList.toggle("light-mode");
+    lsSet("theme", document.body.classList.contains("light-mode") ? "light" : "dark");
+    render();
+  };
+
+  document.getElementById("player-export-btn").onclick = () => {
+    const data = { playerNotes, playerCharacters };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `nymara-player-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  document.getElementById("player-import-file").onchange = e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = evt => {
+      const status = document.getElementById("player-import-status");
+      try {
+        const data = JSON.parse(evt.target.result);
+        if (typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid format — expected a JSON object");
+        if (data.playerNotes !== undefined) lsSet("playerNotes", data.playerNotes);
+        if (data.playerCharacters !== undefined) lsSet("playerCharacters", data.playerCharacters);
+        location.reload();
+      } catch (err) {
+        status.textContent = "Import failed: " + err.message;
+        status.style.color = "#a05040";
+        status.style.display = "block";
+      }
+    };
+    reader.readAsText(file);
+  };
+}
+
+// ── Landing screen ───────────────────────────────────────────────────────────
+function renderLandingHTML() {
+  const lm = document.body.classList.contains("light-mode");
+  const bg        = lm ? "#f4efe0" : "#0d0f14";
+  const cardBg    = lm ? "#ede8d8" : "#0b0d11";
+  const cardBdr   = lm ? "#c8b890" : "#2a2518";
+  const titleCol  = lm ? "#8a6010" : "#c8a96e";
+  const textCol   = lm ? "#2a2010" : "#d4c9a8";
+  const mutedCol  = lm ? "#8a7a50" : "#5a5040";
+  return `
+    <div style="min-height:100vh;width:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:${bg};padding:2rem;gap:2.5rem;overflow-y:auto;">
+      <div style="text-align:center;">
+        <p style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:${mutedCol};margin-bottom:0.75rem;">Welcome to</p>
+        <h1 style="font-size:clamp(26px,5vw,42px);font-weight:normal;letter-spacing:0.12em;color:${titleCol};text-transform:uppercase;margin-bottom:0.4rem;">The World of Nymara</h1>
+        <p style="font-size:13px;color:${mutedCol};font-style:italic;margin-bottom:1.5rem;">Mountainous Rainforest Islands</p>
+        <p style="font-size:15px;color:${textCol};letter-spacing:0.04em;">How are you exploring the world?</p>
+      </div>
+      <div style="display:flex;gap:1.5rem;flex-wrap:wrap;justify-content:center;width:100%;max-width:640px;">
+        <button onclick="selectMode('dm')" class="mode-card" style="background:${cardBg};border:1px solid ${cardBdr};border-radius:6px;padding:2.5rem 1.75rem;flex:1;min-width:200px;max-width:280px;cursor:pointer;font-family:inherit;text-align:center;display:flex;flex-direction:column;align-items:center;gap:1rem;transition:border-color 0.2s,box-shadow 0.2s;">
+          <svg xmlns="http://www.w3.org/2000/svg" height="44px" viewBox="0 -960 960 960" width="44px" fill="${titleCol}"><path d="M240-160q-17 0-28.5-11.5T200-200q0-17 11.5-28.5T240-240h480q17 0 28.5 11.5T760-200q0 17-11.5 28.5T720-160H240Zm28-140q-29 0-51.5-19T189-367l-40-254q-2 0-4.5.5t-4.5.5q-25 0-42.5-17.5T80-680q0-25 17.5-42.5T140-740q25 0 42.5 17.5T200-680q0 7-1.5 13t-3.5 11l125 56 125-171q-11-8-18-21t-7-28q0-25 17.5-42.5T480-880q25 0 42.5 17.5T540-820q0 15-7 28t-18 21l125 171 125-56q-2-5-3.5-11t-1.5-13q0-25 17.5-42.5T820-740q25 0 42.5 17.5T880-680q0 25-17.5 42.5T820-620q-2 0-4.5-.5t-4.5-.5l-40 254q-5 29-27.5 48T692-300H268Zm0-80h424l26-167-46 20q-26 11-53 4t-44-30l-95-131-95 131q-17 23-44 30t-53-4l-46-20 26 167Zm212 0Z"/></svg>
+          <div>
+            <div style="font-size:18px;letter-spacing:0.1em;text-transform:uppercase;color:${textCol};margin-bottom:0.4rem;">Dungeon Master</div>
+            <div style="font-size:12px;color:${mutedCol};line-height:1.6;">World management, encounters,<br>NPCs, factions & more</div>
+          </div>
+        </button>
+        <button onclick="selectMode('player')" class="mode-card" style="background:${cardBg};border:1px solid ${cardBdr};border-radius:6px;padding:2.5rem 1.75rem;flex:1;min-width:200px;max-width:280px;cursor:pointer;font-family:inherit;text-align:center;display:flex;flex-direction:column;align-items:center;gap:1rem;transition:border-color 0.2s,box-shadow 0.2s;">
+          <svg xmlns="http://www.w3.org/2000/svg" height="44px" viewBox="0 -960 960 960" width="44px" fill="${titleCol}"><path d="M240-80q-33 0-56.5-23.5T160-160v-79q0-20 9-37t24-29q69-56 103.5-113T345-520h-65q-17 0-28.5-11.5T240-560q0-17 11.5-28.5T280-600h50q-14-22-22-47t-8-53q0-75 52.5-127.5T480-880q75 0 127.5 52.5T660-700q0 28-8 53t-22 47h50q17 0 28.5 11.5T720-560q0 17-11.5 28.5T680-520h-65q14 45 48.5 102T767-305q15 12 24 29t9 37v79q0 33-23.5 56.5T720-80H240Zm0-80h480v-80q-92-72-133-148.5T532-520H428q-14 55-55 131.5T240-240v80Zm240-440q42 0 71-29t29-71q0-42-29-71t-71-29q-42 0-71 29t-29 71q0 42 29 71t71 29Zm0-100Zm0 540Z"/></svg>
+          <div>
+            <div style="font-size:18px;letter-spacing:0.1em;text-transform:uppercase;color:${textCol};margin-bottom:0.4rem;">Player</div>
+            <div style="font-size:12px;color:${mutedCol};line-height:1.6;">Session notes, lore,<br>and your adventure journal</div>
+          </div>
+        </button>
+      </div>
+    </div>`;
+}
+
+// ── Player app ────────────────────────────────────────────────────────────────
+function renderPlayerMain(main) {
+  if (playerCurrentPage === "notes") renderPlayerNotesPage(main);
+  else if (playerCurrentPage === "character") renderPlayerCharacterPage(main);
+  else if (playerCurrentPage === "settings") renderPlayerSettingsPage(main);
+}
+
+function renderPlayerNotesPage(main) {
+  const lm = document.body.classList.contains("light-mode");
+  const cardBg  = lm ? "#ede8d8" : "#0b0d11";
+  const cardBdr = lm ? "#c8b890" : "#1e1c14";
+  const textCol = lm ? "#2a2010" : "#d4c9a8";
+  const mutedCol = lm ? "#8a7a50" : "#5a5040";
+  const accentCol = lm ? "#7a5e14" : "#c8a96e";
+  const btnBg   = lm ? "#e8dfc8" : "#161210";
+
+  if (playerNoteEditorId !== null) {
+    const isNew = playerNoteEditorId === "new";
+    const note  = isNew ? null : playerNotes.find(n => n.id === playerNoteEditorId);
+    if (!isNew && !note) { playerNoteEditorId = null; renderPlayerNotesPage(main); return; }
+    const title = note?.title ?? "";
+    const body  = note?.body  ?? "";
+    main.innerHTML = `
+      <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:1.5rem;flex-wrap:wrap;">
+        <button onclick="playerNoteEditorId=null;render();" style="background:none;border:none;color:${mutedCol};cursor:pointer;padding:4px 0;font-family:inherit;font-size:13px;letter-spacing:0.04em;">← Back to notes</button>
+        ${!isNew ? `<button onclick="deletePlayerNote('${note.id}')" style="margin-left:auto;background:none;border:1px solid #3a1a1a;border-radius:3px;color:#7a4040;cursor:pointer;font-family:inherit;font-size:12px;padding:4px 12px;">Delete</button>` : ""}
+      </div>
+      <input class="edit-input" id="player-note-title" placeholder="Note title…" value="${esc(title)}" style="width:100%;font-size:18px;margin-bottom:1rem;">
+      <textarea class="edit-input" id="player-note-body" placeholder="Write your notes here…" style="width:100%;min-height:360px;resize:vertical;line-height:1.7;font-size:14px;">${esc(body)}</textarea>
+      <div style="display:flex;align-items:center;gap:0.75rem;margin-top:1rem;">
+        <button onclick="savePlayerNote()" style="background:${btnBg};border:1px solid ${lm?"#c8b890":"#2a2518"};border-radius:3px;color:${accentCol};font-family:inherit;font-size:13px;letter-spacing:0.06em;padding:7px 22px;cursor:pointer;">Save Note</button>
+        <span id="player-note-saved" style="font-size:12px;color:${mutedCol};font-style:italic;display:none;">Saved</span>
+      </div>`;
+    return;
+  }
+
+  const sorted = [...playerNotes].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  const SVG_ADD_NOTE = `<svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="currentColor"><path d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v268q-19-9-39-15.5t-41-9.5v-243H200v560h242q3 22 9.5 42t15.5 38H200Zm0-120v40-560 243-3 280Zm80-40h163q3-21 9.5-41t14.5-39H280v80Zm0-160h244q32-30 71.5-50t84.5-27v-3H280v80Zm0-160h400v-80H280v80ZM720-40q-83 0-141.5-58.5T520-240q0-83 58.5-141.5T720-440q83 0 141.5 58.5T920-240q0 83-58.5 141.5T720-40Zm-20-80h40v-100h100v-40H740v-100h-40v100H600v40h100v100Z"/></svg>`;
+  const SVG_EDIT_NOTE = `<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor"><path d="M160-400v-80h280v80H160Zm0-160v-80h440v80H160Zm0-160v-80h440v80H160Zm360 560v-123l221-220q9-9 20-13t22-4q12 0 23 4.5t20 13.5l37 37q8 9 12.5 20t4.5 22q0 11-4 22.5T863-380L643-160H520Zm300-263-37-37 37 37ZM580-220h38l121-122-18-19-19-18-122 121v38Zm141-141-19-18 37 37-18-19Z"/></svg>`;
+
+  main.innerHTML = `
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1.75rem;flex-wrap:wrap;">
+      <div>
+        <div class="page-title">Player Notes</div>
+        <div class="page-subtitle-sm">Your adventure journal</div>
+      </div>
+      <button onclick="openNewPlayerNote()" style="display:flex;align-items:center;gap:6px;background:${btnBg};border:1px solid ${lm?"#c8b890":"#2a2518"};border-radius:3px;color:${accentCol};font-family:inherit;font-size:13px;letter-spacing:0.06em;padding:7px 16px;cursor:pointer;flex-shrink:0;">
+        ${SVG_ADD_NOTE} New Note
+      </button>
+    </div>
+    ${sorted.length === 0
+      ? `<div style="text-align:center;padding:4rem 2rem;color:${lm?"#b0a880":"#252010"};font-size:14px;font-style:italic;border:1px dashed ${lm?"#d4c8a0":"#1e1c14"};border-radius:3px;">No notes yet — tap New Note to start your journal.</div>`
+      : sorted.map(n => `
+        <div onclick="playerNoteEditorId='${n.id}';render();" style="background:${cardBg};border:1px solid ${cardBdr};border-radius:3px;padding:0.9rem 1.1rem;margin-bottom:0.6rem;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:1rem;transition:border-color 0.15s;" onmouseenter="this.style.borderColor='${accentCol}40'" onmouseleave="this.style.borderColor='${cardBdr}'">
+          <div style="min-width:0;">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
+              ${SVG_EDIT_NOTE.replace('fill="currentColor"', `fill="${accentCol}"`)}
+              <span style="font-size:15px;color:${textCol};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(n.title || "Untitled")}</span>
+            </div>
+            <div style="font-size:12px;color:${mutedCol};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${n.body ? esc(n.body.slice(0, 90)) + (n.body.length > 90 ? "…" : "") : "No content"}</div>
+          </div>
+          <div style="font-size:11px;color:${lm?"#b0a070":"#3a3020"};flex-shrink:0;">${formatRelativeTime(n.updatedAt)}</div>
+        </div>`).join("")}`;
+}
+
+// ── Player character sheet ────────────────────────────────────────────────────
+function renderPlayerCharacterPage(main) {
+  if (playerCharEditorState) renderPlayerCharEditor(main);
+  else renderPlayerCharsPage(main);
+}
+
+function renderPlayerCharsPage(main) {
+  const count = playerCharacters.length;
+  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem;">
+    <div>
+      <h2 style="font-size:20px;font-weight:normal;color:#e8ddb8;letter-spacing:0.08em;">My Characters</h2>
+      <p style="font-size:13px;color:#5a5040;font-style:italic;margin-top:2px;">${count} character${count === 1 ? "" : "s"}</p>
+    </div>
+  </div>`;
+  if (!count) {
+    html += `<div style="text-align:center;padding:3rem;border:1px dashed #2a2518;border-radius:3px;">
+      <div style="color:#3a3020;font-size:14px;margin-bottom:0.5rem;">No characters yet</div>
+      <div style="color:#2a2010;font-size:12px;font-style:italic;margin-bottom:1.5rem;">Create your character sheet to track your stats, abilities, and notes.</div>
+      <button onclick="createPlayerChar()" class="btn-sm">+ New Character</button>
+    </div>`;
+  } else {
+    html += `<div class="card-grid" style="margin-bottom:1rem;">`;
+    playerCharacters.forEach(pc => {
+      const classLine = [pc.class, pc.subclass].filter(Boolean).join(" — ");
+      const meta = [pc.race, classLine, pc.level ? `Lv. ${pc.level}` : ""].filter(Boolean).join(" · ");
+      const hp = (pc.currentHealth != null && pc.totalHealth) ? `${pc.currentHealth}/${pc.totalHealth} HP` : "";
+      html += `<div class="card-btn" role="button" tabindex="0" onclick="openPlayerCharEditor('${pc.id}')">
+        <div style="flex:1">
+          <div class="card-name">${esc(pc.name)}</div>
+          <div style="font-size:11px;color:#5a5040;margin-top:4px;line-height:1.5">${esc(meta)}${hp ? `<span style="color:#3a3020"> — </span>${esc(hp)}` : ""}</div>
+        </div>
+      </div>`;
+    });
+    html += `</div><button onclick="createPlayerChar()" class="btn-dashed">+ New Character</button>`;
+  }
+  main.innerHTML = html;
+}
+
+function renderPlayerCharEditor(main) {
+  const pc = playerCharEditorState;
+  const isNew = !pc.id;
+  const statKeys = [
+    { key: "str", label: "STR" }, { key: "dex", label: "DEX" }, { key: "con", label: "CON" },
+    { key: "int", label: "INT" }, { key: "wis", label: "WIS" }, { key: "cha", label: "CHA" },
+  ];
+
+  let html = `<button class="back-btn" id="btn-pc-back">← Back to My Characters</button>`;
+  const classLevel = [pc.class, pc.level ? `Lv. ${pc.level}` : ""].filter(Boolean).join(" — ");
+  html += `<div class="detail-header editor-header" style="background:#16140e;border:1px solid #3a3020;margin-bottom:1.5rem;">
+    <div>
+      <div class="detail-label">Player Character</div>
+      <div class="detail-title" style="color:#c8a96e">${esc(pc.name || "New Character")}</div>
+      ${pc.player ? `<div style="font-size:12px;color:#5a5040;margin-top:4px;">Player: ${esc(pc.player)}</div>` : ""}
+    </div>
+    <div style="text-align:right">
+      ${classLevel ? `<div style="font-size:13px;color:#9a8e6e">${esc(classLevel)}</div>` : ""}
+      ${pc.race ? `<div style="font-size:12px;color:#5a5040;margin-top:2px">${esc(pc.race)}</div>` : ""}
+    </div>
+  </div>`;
+
+  html += `<div class="box" style="margin-bottom:1rem;">
+    <p class="box-label">Identity</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+      <div><div class="section-label">Name</div><input class="edit-input" id="pc-name" style="width:100%" value="${esc(pc.name || "")}"></div>
+      <div><div class="section-label">Player</div><input class="edit-input" id="pc-player" style="width:100%" value="${esc(pc.player || "")}"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;">
+      <div><div class="section-label">Race</div><select class="edit-input" id="pc-race" style="width:100%">${(() => {
+          const options = [...settingsCustomRaces, ...(settingsAllowedRaces.length ? settingsAllowedRaces : ALL_RACE_NAMES)];
+          if (pc.race && !options.includes(pc.race)) options.unshift(pc.race);
+          return `<option value="" ${!pc.race ? "selected" : ""} disabled>Select Race</option>` + options.map(r => `<option value="${esc(r)}"${r === pc.race ? " selected" : ""}>${esc(r)}</option>`).join("");
+        })()}</select></div>
+      <div><div class="section-label">Class</div><select class="edit-input" id="pc-class" style="width:100%" onchange="updatePcSubclassOptions(this.value)">${(() => {
+          const opts = [...settingsCustomClasses, ...(settingsAllowedClasses.length ? settingsAllowedClasses : ALL_CLASS_NAMES)];
+          if (pc.class && !opts.includes(pc.class)) opts.unshift(pc.class);
+          return `<option value=""${!pc.class ? " selected" : ""} disabled>Select Class</option>` + opts.map(c => `<option value="${esc(c)}"${c === pc.class ? " selected" : ""}>${esc(c)}</option>`).join("");
+        })()}</select></div>
+      <div><div class="section-label">Subclass</div><select class="edit-input" id="pc-subclass" style="width:100%">${(() => {
+          const classData = ALL_DND_CLASSES.find(c => c.name === pc.class);
+          const builtinSubs = classData ? classData.subclasses.filter(s => settingsAllowedSubclasses.includes(`${pc.class}|${s}`)) : [];
+          const customSubs = settingsCustomSubclasses[pc.class] || [];
+          const opts = [...customSubs, ...builtinSubs];
+          if (pc.subclass && !opts.includes(pc.subclass)) opts.unshift(pc.subclass);
+          return `<option value=""${!pc.subclass ? " selected" : ""}>Select Subclass</option>` + opts.map(s => `<option value="${esc(s)}"${s === pc.subclass ? " selected" : ""}>${esc(s)}</option>`).join("");
+        })()}</select></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;">
+      <div><div class="section-label">Level</div><input class="edit-input" id="pc-level" type="number" min="1" max="20" style="width:100%" value="${pc.level || ""}"></div>
+      <div><div class="section-label">Background</div><input class="edit-input" id="pc-background" style="width:100%" value="${esc(pc.background || "")}"></div>
+      <div><div class="section-label">Alignment</div><input class="edit-input" id="pc-alignment" style="width:100%" value="${esc(pc.alignment || "")}"></div>
+      <div><div class="section-label">Age</div><input class="edit-input" id="pc-age" style="width:100%" value="${esc(pc.age || "")}"></div>
+    </div>
+  </div>`;
+
+  html += `<div class="box" style="margin-bottom:1rem;">
+    <p class="box-label">Combat</p>
+    <div class="pc-combat-grid">
+      <div><div class="section-label">Current HP</div><input class="edit-input" id="pc-current-health" type="number" style="width:100%" value="${pc.currentHealth ?? ""}"></div>
+      <div><div class="section-label">Max HP</div><input class="edit-input" id="pc-total-health" type="number" style="width:100%" value="${pc.totalHealth ?? ""}"></div>
+      <div><div class="section-label">Armor Class</div><input class="edit-input" id="pc-ac" type="number" style="width:100%" value="${pc.ac ?? ""}"></div>
+      <div><div class="section-label">Speed (ft)</div><input class="edit-input" id="pc-speed" type="number" style="width:100%" value="${pc.speed ?? ""}"></div>
+      <div><div class="section-label">Initiative</div><input class="edit-input" id="pc-initiative" style="width:100%" value="${esc(pc.initiative ?? "")}"></div>
+      <div><div class="section-label">Prof. Bonus</div><input class="edit-input" id="pc-prof-bonus" style="width:100%" value="${esc(pc.profBonus ?? "")}"></div>
+    </div>
+    <div style="margin-top:0.75rem;display:flex;gap:2rem;align-items:flex-start;flex-wrap:wrap;">
+      ${(() => {
+        const lm = document.body.classList.contains("light-mode");
+        const emptyBorder = lm ? "#c8b890" : "#3a3020";
+        return ["success","failure"].map(type => {
+          const saves = pc[type === "success" ? "deathSaveSuccesses" : "deathSaveFailures"] || [false,false,false];
+          const label = type === "success" ? "Death Save Successes" : "Death Save Failures";
+          const filledColor = type === "success" ? "#2e6e28" : "#7a2020";
+          const borderFilled = type === "success" ? "#4a9040" : "#9a3030";
+          return `<div>
+            <div class="section-label" style="margin-bottom:6px;">${label}</div>
+            <div style="display:flex;gap:8px;">${[0,1,2].map(i => {
+              const filled = !!saves[i];
+              return `<button id="death-save-${type}-${i}" onclick="togglePlayerDeathSave('${type}',${i})" style="width:22px;height:22px;border-radius:50%;background:${filled ? filledColor : "transparent"};border:2px solid ${filled ? borderFilled : emptyBorder};cursor:pointer;padding:0;transition:all 0.15s;" title="${label} ${i+1}"></button>`;
+            }).join("")}</div>
+          </div>`;
+        }).join("");
+      })()}
+    </div>
+  </div>`;
+
+  html += `<div class="box" style="margin-bottom:1rem;">
+    <p class="box-label">Ability Scores</p>
+    <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;">`;
+  statKeys.forEach(({ key, label }) => {
+    const val = pc[key] ?? 10;
+    const mod = Math.floor((val - 10) / 2);
+    const modStr = mod >= 0 ? `+${mod}` : `${mod}`;
+    html += `<div style="text-align:center;">
+      <div class="section-label" style="text-align:center;">${label}</div>
+      <input class="edit-input" id="pc-${key}" type="number" min="1" max="30" style="width:100%;text-align:center;" value="${val}" oninput="updatePcModifier('${key}',this.value)">
+      <div id="pc-${key}-mod" style="font-size:13px;color:#c8a96e;margin-top:4px;">${modStr}</div>
+    </div>`;
+  });
+  html += `</div></div>`;
+
+  html += `<div class="box" style="margin-bottom:1rem;">
+    <p class="box-label">Passives</p>
+    <div class="pc-passives-grid">
+      <div><div class="section-label">Passive Perception</div><input class="edit-input" id="pc-passive-perception" type="number" style="width:100%" value="${pc.passivePerception ?? ""}"></div>
+      <div><div class="section-label">Passive Insight</div><input class="edit-input" id="pc-passive-insight" type="number" style="width:100%" value="${pc.passiveInsight ?? ""}"></div>
+      <div><div class="section-label">Passive Investigation</div><input class="edit-input" id="pc-passive-investigation" type="number" style="width:100%" value="${pc.passiveInvestigation ?? ""}"></div>
+    </div>
+  </div>`;
+
+  html += `<div class="box" style="margin-bottom:1rem;">
+    <p class="box-label">Defenses</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+      <div><div class="section-label">Damage Immunities</div><textarea class="edit-textarea" id="pc-dmg-immunities" style="min-height:64px;">${esc(pc.damageImmunities || "")}</textarea></div>
+      <div><div class="section-label">Condition Immunities</div><textarea class="edit-textarea" id="pc-cond-immunities" style="min-height:64px;">${esc(pc.conditionImmunities || "")}</textarea></div>
+      <div><div class="section-label">Resistances</div><textarea class="edit-textarea" id="pc-resistances" style="min-height:64px;">${esc(pc.resistances || "")}</textarea></div>
+      <div><div class="section-label">Vulnerabilities</div><textarea class="edit-textarea" id="pc-vulnerabilities" style="min-height:64px;">${esc(pc.vulnerabilities || "")}</textarea></div>
+    </div>
+  </div>`;
+
+  html += `<div class="box" style="margin-bottom:1rem;">
+    <p class="box-label">Notes</p>
+    <textarea class="note-textarea" id="pc-notes">${esc(pc.notes || "")}</textarea>
+  </div>`;
+
+  html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:0.5rem;">
+    ${!isNew ? `<button class="btn-delete" id="btn-pc-delete">Delete Character</button>` : `<div></div>`}
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span class="save-status" id="pc-save-status" style="color:#3a3020">Saved</span>
+      <button class="btn-save" id="btn-pc-save">Save Character</button>
+    </div>
+  </div>`;
+
+  main.innerHTML = html;
+  bindPlayerCharEditorEvents();
+}
+
+function createPlayerChar() {
+  playerCharEditorState = {
+    id: null, name: "New Character", player: "", race: "", class: "", subclass: "",
+    level: 1, background: "", alignment: "", age: "",
+    currentHealth: 0, totalHealth: 0, ac: 0, speed: 30,
+    initiative: "", profBonus: "+2",
+    str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10,
+    passivePerception: 10, passiveInsight: 10, passiveInvestigation: 10,
+    damageImmunities: "", conditionImmunities: "", resistances: "", vulnerabilities: "",
+    notes: "", favorited: false,
+    deathSaveSuccesses: [false, false, false],
+    deathSaveFailures: [false, false, false],
+  };
+  render();
+}
+
+function openPlayerCharEditor(id) {
+  const pc = playerCharacters.find(p => p.id === id);
+  if (pc) { playerCharEditorState = { ...pc }; render(); }
+}
+
+function bindPlayerCharEditorEvents() {
+  const saveBtn = document.getElementById("btn-pc-save");
+  const status  = document.getElementById("pc-save-status");
+  const markDirty = () => { saveBtn.classList.add("dirty"); status.style.color = "#c8a96e"; status.textContent = "Unsaved changes"; };
+  document.querySelectorAll("#main-content input, #main-content textarea, #main-content select").forEach(el => {
+    el.addEventListener("input", markDirty);
+    el.addEventListener("change", markDirty);
+  });
+  document.getElementById("btn-pc-back").onclick = () => { playerCharEditorState = null; render(); };
+  saveBtn.onclick = savePlayerChar;
+  const deleteBtn = document.getElementById("btn-pc-delete");
+  if (deleteBtn) deleteBtn.onclick = () => {
+    if (!confirm(`Delete ${playerCharEditorState.name || "this character"}?`)) return;
+    playerCharacters = playerCharacters.filter(p => p.id !== playerCharEditorState.id);
+    savePlayerCharacters();
+    playerCharEditorState = null;
+    render();
+  };
+}
+
+function savePlayerChar() {
+  const saved = {
+    id: playerCharEditorState.id || ("pc-" + Date.now()),
+    favorited: playerCharEditorState.favorited || false,
+    name: document.getElementById("pc-name")?.value.trim() || "Unnamed",
+    player: document.getElementById("pc-player")?.value.trim() || "",
+    race: document.getElementById("pc-race")?.value.trim() || "",
+    class: document.getElementById("pc-class")?.value.trim() || "",
+    subclass: document.getElementById("pc-subclass")?.value.trim() || "",
+    level: parseInt(document.getElementById("pc-level")?.value) || 0,
+    background: document.getElementById("pc-background")?.value.trim() || "",
+    alignment: document.getElementById("pc-alignment")?.value.trim() || "",
+    age: document.getElementById("pc-age")?.value.trim() || "",
+    currentHealth: parseInt(document.getElementById("pc-current-health")?.value) || 0,
+    totalHealth: parseInt(document.getElementById("pc-total-health")?.value) || 0,
+    ac: parseInt(document.getElementById("pc-ac")?.value) || 0,
+    speed: parseInt(document.getElementById("pc-speed")?.value) || 0,
+    initiative: document.getElementById("pc-initiative")?.value.trim() || "",
+    profBonus: document.getElementById("pc-prof-bonus")?.value.trim() || "",
+    str: parseInt(document.getElementById("pc-str")?.value) || 10,
+    dex: parseInt(document.getElementById("pc-dex")?.value) || 10,
+    con: parseInt(document.getElementById("pc-con")?.value) || 10,
+    int: parseInt(document.getElementById("pc-int")?.value) || 10,
+    wis: parseInt(document.getElementById("pc-wis")?.value) || 10,
+    cha: parseInt(document.getElementById("pc-cha")?.value) || 10,
+    passivePerception: parseInt(document.getElementById("pc-passive-perception")?.value) || 0,
+    passiveInsight: parseInt(document.getElementById("pc-passive-insight")?.value) || 0,
+    passiveInvestigation: parseInt(document.getElementById("pc-passive-investigation")?.value) || 0,
+    damageImmunities: document.getElementById("pc-dmg-immunities")?.value.trim() || "",
+    conditionImmunities: document.getElementById("pc-cond-immunities")?.value.trim() || "",
+    resistances: document.getElementById("pc-resistances")?.value.trim() || "",
+    vulnerabilities: document.getElementById("pc-vulnerabilities")?.value.trim() || "",
+    notes: document.getElementById("pc-notes")?.value || "",
+    deathSaveSuccesses: playerCharEditorState.deathSaveSuccesses || [false, false, false],
+    deathSaveFailures: playerCharEditorState.deathSaveFailures || [false, false, false],
+  };
+  const idx = playerCharacters.findIndex(p => p.id === saved.id);
+  if (idx >= 0) playerCharacters[idx] = saved; else playerCharacters.push(saved);
+  savePlayerCharacters();
+  playerCharEditorState = saved;
+  const saveBtn = document.getElementById("btn-pc-save");
+  const status  = document.getElementById("pc-save-status");
+  if (saveBtn) saveBtn.classList.remove("dirty");
+  if (status) { status.style.color = "#5a9060"; status.textContent = "Saved!"; }
+  setTimeout(() => render(), 600);
+}
+
+function togglePlayerDeathSave(type, idx) {
+  const key = type === "success" ? "deathSaveSuccesses" : "deathSaveFailures";
+  if (!playerCharEditorState[key]) playerCharEditorState[key] = [false, false, false];
+  playerCharEditorState[key][idx] = !playerCharEditorState[key][idx];
+  const filled = playerCharEditorState[key][idx];
+  const filledBg     = type === "success" ? "#2e6e28" : "#7a2020";
+  const filledBorder = type === "success" ? "#4a9040" : "#9a3030";
+  const emptyBorder  = document.body.classList.contains("light-mode") ? "#c8b890" : "#3a3020";
+  const dot = document.getElementById(`death-save-${type}-${idx}`);
+  if (dot) { dot.style.background = filled ? filledBg : "transparent"; dot.style.borderColor = filled ? filledBorder : emptyBorder; }
+  if (playerCharEditorState.id) {
+    const pc = playerCharacters.find(p => p.id === playerCharEditorState.id);
+    if (pc) { pc[key] = [...playerCharEditorState[key]]; savePlayerCharacters(); }
+  }
+}
+
+function openNewPlayerNote() {
+  playerNoteEditorId = "new";
+  render();
+}
+
+function savePlayerNote() {
+  const titleEl = document.getElementById("player-note-title");
+  const bodyEl  = document.getElementById("player-note-body");
+  const title = titleEl?.value ?? "";
+  const body  = bodyEl?.value ?? "";
+  if (playerNoteEditorId === "new") {
+    const id = `pnote-${Date.now()}`;
+    playerNotes.push({ id, title, body, updatedAt: Date.now() });
+    playerNoteEditorId = id;
+  } else {
+    const note = playerNotes.find(n => n.id === playerNoteEditorId);
+    if (note) { note.title = title; note.body = body; note.updatedAt = Date.now(); }
+  }
+  savePlayerNotes();
+  const savedEl = document.getElementById("player-note-saved");
+  if (savedEl) { savedEl.style.display = "inline"; setTimeout(() => { savedEl.style.display = "none"; }, 1500); }
+}
+
+function deletePlayerNote(id) {
+  if (!confirm("Delete this note?")) return;
+  playerNotes = playerNotes.filter(n => n.id !== id);
+  savePlayerNotes();
+  playerNoteEditorId = null;
+  render();
+}
+
+function formatRelativeTime(ts) {
+  if (!ts) return "";
+  const diff = Date.now() - ts;
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
+// Hotbar events — event delegation so it works after dynamic re-render
+document.getElementById("hotbar").addEventListener("click", e => {
+  const btn = e.target.closest(".hotbar-btn");
+  if (!btn) return;
+  if (btn.dataset.playerPage) {
+    playerCurrentPage = btn.dataset.playerPage;
+    playerNoteEditorId = null;
+    playerCharEditorState = null;
+    render();
+  } else if (btn.dataset.page) {
     saveCurrentPageState();
     currentPage = btn.dataset.page;
     restorePageState(currentPage);
     render();
-  };
+  }
 });
 
 render();
