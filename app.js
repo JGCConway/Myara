@@ -159,10 +159,25 @@ function savePlayerNotes() { lsSet("playerNotes", playerNotes); }
 let playerCharacters = lsGet("playerCharacters", []); // same shape as pcLinks
 function savePlayerCharacters() { lsSet("playerCharacters", playerCharacters); }
 let playerCharEditorState = null;
+let playerContacts = lsGet("playerContacts", []); // [{ id, name, relationship, notes, updatedAt }]
+function savePlayerContacts() { lsSet("playerContacts", playerContacts); }
+let playerContactEditorId = null;
 let cityTradeOverrides = lsGet("cityTradeOverrides", {}); // { [cityId]: { exports: [...], imports: [...] } }
 function getCityExports(cityId) { const o = cityTradeOverrides[String(cityId)]; return o ? o.exports : (getLocationById(cityId)?.exports || []); }
 function getCityImports(cityId) { const o = cityTradeOverrides[String(cityId)]; return o ? o.imports : (getLocationById(cityId)?.imports || []); }
 function saveCityTrade(cityId, exports, imports) { cityTradeOverrides[String(cityId)] = { exports, imports }; lsSet("cityTradeOverrides", cityTradeOverrides); }
+let settingsWorldName = lsGet("settingsWorldName", "Nymara");
+function setWorldName(val) {
+  settingsWorldName = val.trim() || "Nymara";
+  lsSet("settingsWorldName", settingsWorldName);
+  renderHeader();
+}
+let settingsWorldSubtitle = lsGet("settingsWorldSubtitle", "Mountainous Rainforest Islands");
+function setWorldSubtitle(val) {
+  settingsWorldSubtitle = val.trim();
+  lsSet("settingsWorldSubtitle", settingsWorldSubtitle);
+  renderHeader();
+}
 let settingsAllowedRaces = lsGet("settingsAllowedRaces", ALL_RACE_NAMES);
 let settingsCustomRaces = lsGet("settingsCustomRaces", []);
 let settingsAllowedStoreTypes = lsGet("settingsAllowedStoreTypes", getAllBuiltinStoreTypes());
@@ -505,8 +520,8 @@ function render() {
 
 function renderHeader() {
   const header = document.getElementById("header");
-  let title = "The World of Nymara";
-  let subtitle = "Mountainous Rainforest Islands — Campaign Reference";
+  let title = settingsWorldName;
+  let subtitle = settingsWorldSubtitle ? `${settingsWorldSubtitle} — Campaign Reference` : "Campaign Reference";
   let countText = "";
   if (currentPage === "locations") {
     countText = `${allLocations().length} locations charted`;
@@ -541,6 +556,8 @@ function renderHeader() {
       countText = `${playerNotes.length} note${playerNotes.length === 1 ? "" : "s"}`;
     } else if (playerCurrentPage === "character") {
       countText = `${playerCharacters.length} character${playerCharacters.length === 1 ? "" : "s"}`;
+    } else if (playerCurrentPage === "contacts") {
+      countText = `${playerContacts.length} contact${playerContacts.length === 1 ? "" : "s"}`;
     }
     subtitle = "Player Mode";
     header.innerHTML = `
@@ -587,6 +604,9 @@ function renderHotbar() {
       </button>
       <button class="hotbar-btn${a("character")}" data-player-page="character" title="My Character">
         <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="M720-40q-83 0-141.5-58.5T520-240q0-83 58.5-141.5T720-440q83 0 141.5 58.5T920-240q0 83-58.5 141.5T720-40ZM280-600h400v-80H280v80Zm187 480H200q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v268q-29-14-58.5-21t-61.5-7q-11 0-20.5.5T680-517v-3H280v80h245q-18 17-32.5 37T467-360H280v80h163q-2 10-2.5 19.5T440-240q0 33 6 61.5t21 58.5Zm295.5-137.5Q780-275 780-300t-17.5-42.5Q745-360 720-360t-42.5 17.5Q660-325 660-300t17.5 42.5Q695-240 720-240t42.5-17.5ZM776-134q26-14 43-39-23-14-48-20.5t-51-6.5q-26 0-51 6.5T621-173q17 25 43 39t56 14q30 0 56-14Z"/></svg>
+      </button>
+      <button class="hotbar-btn${a("contacts")}" data-player-page="contacts" title="Family &amp; Friends">
+        <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="M720-720q-33 0-56.5-23.5T640-800q0-33 23.5-56.5T720-880q33 0 56.5 23.5T800-800q0 33-23.5 56.5T720-720ZM680-80v-320q0-40-20.5-72T607-522l35-103q8-25 29.5-40t48.5-15q27 0 48.5 15t29.5 40l102 305H800v240H680ZM457.5-517.5Q440-535 440-560t17.5-42.5Q475-620 500-620t42.5 17.5Q560-585 560-560t-17.5 42.5Q525-500 500-500t-42.5-17.5ZM220-720q-33 0-56.5-23.5T140-800q0-33 23.5-56.5T220-880q33 0 56.5 23.5T300-800q0 33-23.5 56.5T220-720ZM140-80v-280H80v-240q0-33 23.5-56.5T160-680h120q33 0 56.5 23.5T360-600v240h-60v280H140Zm300 0v-160h-40v-160q0-25 17.5-42.5T460-460h80q25 0 42.5 17.5T600-400v160h-40v160H440Z"/></svg>
       </button>
       <button class="hotbar-btn${a("settings")}" data-player-page="settings" title="Settings">
         <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor"><path d="m370-80-16-128q-13-5-24.5-12T307-235l-119 50L78-375l103-78q-1-7-1-13.5v-27q0-6.5 1-13.5L78-585l110-190 119 50q11-8 23-15t24-12l16-128h220l16 128q13 5 24.5 12t22.5 15l119-50 110 190-103 78q1 7 1 13.5v27q0 6.5-2 13.5l103 78-110 190-118-50q-11 8-23 15t-24 12L590-80H370Zm112-260q58 0 99-41t41-99q0-58-41-99t-99-41q-59 0-99.5 41T342-480q0 58 40.5 99t99.5 41Z"/></svg>
@@ -4166,7 +4186,7 @@ function renderSettingsPage(main) {
 
   let html = `<div style="max-width:700px;margin:0 auto;">`;
   html += `<h2 class="page-title">Settings</h2>`;
-  html += `<p class="page-subtitle-sm" style="margin-bottom:2rem;">Campaign configuration for The World of Nymara</p>`;
+  html += `<p class="page-subtitle-sm" style="margin-bottom:2rem;">Campaign configuration for ${settingsWorldName}</p>`;
   html += `<div class="settings-section" style="background:${lm?"#f0ece0":"#0b0d0f"};border:1px solid ${lm?"#c8b890":"#1e1c14"};border-left:3px solid #5a5040;margin-bottom:1.5rem;padding:1rem 1.5rem;">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;">
       <div>
@@ -4174,6 +4194,29 @@ function renderSettingsPage(main) {
         <div class="settings-section-sub">Currently in Dungeon Master mode</div>
       </div>
       <button onclick="selectMode(null)" style="background:${lm?"#e8e0cc":"#161210"};border:1px solid ${lm?"#c8b890":"#2a2518"};border-radius:3px;color:${lm?"#7a5e14":"#c8a96e"};font-family:inherit;font-size:13px;letter-spacing:0.08em;padding:6px 18px;cursor:pointer;">Switch Mode</button>
+    </div>
+  </div>`;
+
+  // ── World Name ─────────────────────────────────────────────────────────────
+  html += `<div class="settings-section" style="background:${lm?"#f0ece0":"#0b0d0f"};border:1px solid ${lm?"#c8b890":"#1e1c14"};border-left:3px solid #5a5040;margin-bottom:1.5rem;padding:1rem 1.5rem;">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;">
+      <div>
+        <div class="settings-section-title">World Name</div>
+        <div class="settings-section-sub">The name shown on the welcome screen and throughout the app</div>
+      </div>
+      <input type="text" value="${settingsWorldName.replace(/"/g,'&quot;')}"
+        oninput="setWorldName(this.value)"
+        style="background:${lm?"#ede8d8":"#0d0f14"};border:1px solid ${lm?"#c8b890":"#2a2518"};border-radius:3px;color:${lm?"#3a2a10":"#c8a96e"};font-family:inherit;font-size:14px;letter-spacing:0.06em;padding:6px 12px;width:200px;outline:none;" />
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem;margin-top:1rem;padding-top:1rem;border-top:1px solid ${lm?"#d8cfa8":"#1e1c14"};">
+      <div>
+        <div class="settings-section-title">World Subtitle</div>
+        <div class="settings-section-sub">Descriptor shown below the world name (leave blank to hide)</div>
+      </div>
+      <input type="text" value="${settingsWorldSubtitle.replace(/"/g,'&quot;')}"
+        oninput="setWorldSubtitle(this.value)"
+        placeholder="e.g. Mountainous Rainforest Islands"
+        style="background:${lm?"#ede8d8":"#0d0f14"};border:1px solid ${lm?"#c8b890":"#2a2518"};border-radius:3px;color:${lm?"#3a2a10":"#c8a96e"};font-family:inherit;font-size:14px;letter-spacing:0.06em;padding:6px 12px;width:200px;outline:none;" />
     </div>
   </div>`;
 
@@ -5020,6 +5063,99 @@ function restorePageState(page) {
   }
 }
 
+// ── Player contacts ───────────────────────────────────────────────────────────
+function renderPlayerContactsPage(main) {
+  const lm = document.body.classList.contains("light-mode");
+  const cardBg   = lm ? "#ede8d8" : "#0b0d11";
+  const cardBdr  = lm ? "#c8b890" : "#1e1c14";
+  const textCol  = lm ? "#2a2010" : "#d4c9a8";
+  const mutedCol = lm ? "#8a7a50" : "#5a5040";
+  const accentCol = lm ? "#7a5e14" : "#c8a96e";
+  const btnBg    = lm ? "#e8dfc8" : "#161210";
+
+  if (playerContactEditorId !== null) {
+    const isNew = playerContactEditorId === "new";
+    const contact = isNew ? null : playerContacts.find(c => c.id === playerContactEditorId);
+    if (!isNew && !contact) { playerContactEditorId = null; renderPlayerContactsPage(main); return; }
+
+    main.innerHTML = `
+      <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:1.5rem;flex-wrap:wrap;">
+        <button onclick="playerContactEditorId=null;render();" style="background:none;border:none;color:${mutedCol};cursor:pointer;padding:4px 0;font-family:inherit;font-size:13px;letter-spacing:0.04em;">← Back to Family &amp; Friends</button>
+        ${!isNew ? `<button onclick="deletePlayerContact('${contact.id}')" style="margin-left:auto;background:none;border:1px solid #3a1a1a;border-radius:3px;color:#7a4040;cursor:pointer;font-family:inherit;font-size:12px;padding:4px 12px;">Delete</button>` : ""}
+      </div>
+      <div style="display:grid;gap:0.75rem;margin-bottom:0.75rem;">
+        <div>
+          <div class="section-label">Name</div>
+          <input class="edit-input" id="contact-name" placeholder="Name…" value="${esc(contact?.name ?? "")}" style="width:100%;font-size:16px;">
+        </div>
+        <div>
+          <div class="section-label">Relationship</div>
+          <input class="edit-input" id="contact-relationship" placeholder="e.g. Brother, Childhood friend, Mentor…" value="${esc(contact?.relationship ?? "")}" style="width:100%;font-size:14px;">
+        </div>
+        <div>
+          <div class="section-label">Notes</div>
+          <textarea class="edit-input" id="contact-notes" placeholder="Write anything about them — history, personality, what they mean to you…" style="width:100%;min-height:280px;resize:vertical;line-height:1.7;font-size:14px;">${esc(contact?.notes ?? "")}</textarea>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:0.75rem;margin-top:0.25rem;">
+        <button onclick="savePlayerContact(${isNew ? "'new'" : `'${contact.id}'`})" style="background:${btnBg};border:1px solid ${lm?"#c8b890":"#2a2518"};border-radius:3px;color:${accentCol};font-family:inherit;font-size:13px;letter-spacing:0.06em;padding:7px 22px;cursor:pointer;">Save</button>
+        <span id="contact-saved" style="font-size:12px;color:${mutedCol};font-style:italic;display:none;">Saved</span>
+      </div>`;
+    return;
+  }
+
+  const sorted = [...playerContacts].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  const SVG_PERSON = `<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 -960 960 960" width="16px" fill="currentColor"><path d="M480-480q-66 0-113-47t-47-113q0-66 47-113t113-47q66 0 113 47t47 113q0 66-47 113t-113 47ZM160-160v-112q0-34 17.5-62.5T224-378q62-31 128-46.5T480-440q66 0 132 15.5T740-378q29 15 44.5 43.5T800-272v112H160Z"/></svg>`;
+  const SVG_ADD = `<svg xmlns="http://www.w3.org/2000/svg" height="18px" viewBox="0 -960 960 960" width="18px" fill="currentColor"><path d="M440-440H200v-80h240v-240h80v240h240v80H520v240h-80v-240Z"/></svg>`;
+
+  main.innerHTML = `
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1.75rem;flex-wrap:wrap;">
+      <div>
+        <div class="page-title">Family &amp; Friends</div>
+        <div class="page-subtitle-sm">Your connections</div>
+      </div>
+      <button onclick="playerContactEditorId='new';render();" style="display:flex;align-items:center;gap:6px;background:${btnBg};border:1px solid ${lm?"#c8b890":"#2a2518"};border-radius:3px;color:${accentCol};font-family:inherit;font-size:13px;letter-spacing:0.06em;padding:7px 16px;cursor:pointer;flex-shrink:0;">
+        ${SVG_ADD} New Contact
+      </button>
+    </div>
+    ${sorted.length === 0
+      ? `<div style="text-align:center;padding:4rem 2rem;color:${lm?"#b0a880":"#252010"};font-size:14px;font-style:italic;border:1px dashed ${lm?"#d4c8a0":"#1e1c14"};border-radius:3px;">No contacts yet — tap New Contact to add someone.</div>`
+      : sorted.map(c => `
+        <div onclick="playerContactEditorId='${c.id}';render();" style="background:${cardBg};border:1px solid ${cardBdr};border-radius:3px;padding:0.9rem 1.1rem;margin-bottom:0.6rem;cursor:pointer;display:flex;align-items:center;gap:1rem;transition:border-color 0.15s;" onmouseenter="this.style.borderColor='${accentCol}40'" onmouseleave="this.style.borderColor='${cardBdr}'">
+          <div style="flex-shrink:0;color:${accentCol}">${SVG_PERSON}</div>
+          <div style="min-width:0;flex:1;">
+            <div style="font-size:15px;color:${textCol};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(c.name || "Unnamed")}</div>
+            ${c.relationship ? `<div style="font-size:12px;color:${mutedCol};margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(c.relationship)}</div>` : ""}
+          </div>
+          <div style="font-size:11px;color:${lm?"#b0a070":"#3a3020"};flex-shrink:0;">${formatRelativeTime(c.updatedAt)}</div>
+        </div>`).join("")}`;
+}
+
+function savePlayerContact(idArg) {
+  const name = document.getElementById("contact-name")?.value.trim() ?? "";
+  const relationship = document.getElementById("contact-relationship")?.value.trim() ?? "";
+  const notes = document.getElementById("contact-notes")?.value ?? "";
+  if (idArg === "new") {
+    const id = "c" + Date.now();
+    playerContacts.push({ id, name, relationship, notes, updatedAt: Date.now() });
+    playerContactEditorId = id;
+  } else {
+    const idx = playerContacts.findIndex(c => c.id === idArg);
+    if (idx !== -1) playerContacts[idx] = { ...playerContacts[idx], name, relationship, notes, updatedAt: Date.now() };
+  }
+  savePlayerContacts();
+  const el = document.getElementById("contact-saved");
+  if (el) { el.style.display = "inline"; setTimeout(() => { el.style.display = "none"; }, 1500); }
+}
+
+function deletePlayerContact(id) {
+  if (!confirm("Delete this contact?")) return;
+  playerContacts = playerContacts.filter(c => c.id !== id);
+  savePlayerContacts();
+  playerContactEditorId = null;
+  render();
+}
+
 // ── Player settings ───────────────────────────────────────────────────────────
 function renderPlayerSettingsPage(main) {
   const lm = document.body.classList.contains("light-mode");
@@ -5122,9 +5258,9 @@ function renderLandingHTML() {
     <div style="min-height:100vh;width:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:${bg};padding:2rem;gap:2.5rem;overflow-y:auto;">
       <div style="text-align:center;">
         <p style="font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:${mutedCol};margin-bottom:0.75rem;">Welcome to</p>
-        <h1 style="font-size:clamp(26px,5vw,42px);font-weight:normal;letter-spacing:0.12em;color:${titleCol};text-transform:uppercase;margin-bottom:0.4rem;">The World of Nymara</h1>
-        <p style="font-size:13px;color:${mutedCol};font-style:italic;margin-bottom:1.5rem;">Mountainous Rainforest Islands</p>
-        <p style="font-size:15px;color:${textCol};letter-spacing:0.04em;">How are you exploring the world?</p>
+        <h1 style="font-size:clamp(26px,5vw,42px);font-weight:normal;letter-spacing:0.12em;color:${titleCol};text-transform:uppercase;margin-bottom:0.4rem;">${settingsWorldName}</h1>
+        ${settingsWorldSubtitle ? `<p style="font-size:13px;color:${mutedCol};font-style:italic;margin-bottom:1.5rem;">${settingsWorldSubtitle}</p>` : ""}
+        <p style="font-size:15px;color:${textCol};letter-spacing:0.04em;">How are you exploring ${settingsWorldName}?</p>
       </div>
       <div style="display:flex;gap:1.5rem;flex-wrap:wrap;justify-content:center;width:100%;max-width:640px;">
         <button onclick="selectMode('dm')" class="mode-card" style="background:${cardBg};border:1px solid ${cardBdr};border-radius:6px;padding:2.5rem 1.75rem;flex:1;min-width:200px;max-width:280px;cursor:pointer;font-family:inherit;text-align:center;display:flex;flex-direction:column;align-items:center;gap:1rem;transition:border-color 0.2s,box-shadow 0.2s;">
@@ -5149,6 +5285,7 @@ function renderLandingHTML() {
 function renderPlayerMain(main) {
   if (playerCurrentPage === "notes") renderPlayerNotesPage(main);
   else if (playerCurrentPage === "character") renderPlayerCharacterPage(main);
+  else if (playerCurrentPage === "contacts") renderPlayerContactsPage(main);
   else if (playerCurrentPage === "settings") renderPlayerSettingsPage(main);
 }
 
@@ -5542,6 +5679,7 @@ document.getElementById("hotbar").addEventListener("click", e => {
     playerCurrentPage = btn.dataset.playerPage;
     playerNoteEditorId = null;
     playerCharEditorState = null;
+    playerContactEditorId = null;
     render();
   } else if (btn.dataset.page) {
     saveCurrentPageState();
